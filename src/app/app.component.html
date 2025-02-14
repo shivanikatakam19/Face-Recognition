@@ -1,16 +1,31 @@
 <div class="webcam-container">
+  <div class="loader-container">
+    <div style="display: grid;justify-content: center; padding: 5px;" *ngIf="isLoading">
+      <div style="display: flex;align-items:center; justify-content: center;">
+        <div class="loader"></div>
+        <h6 style="margin: 0px;">Connecting...</h6>
+      </div>
+      <h5 style="margin: 0px; margin-top: 5px;">Hold face still..</h5>
+    </div>
+    <div *ngIf="showKeepFaceMsg" style="display: flex;align-items:center; justify-content: center;">
+      <h5>Keep face within the oval</h5>
+    </div>
+    <!-- <div *ngIf="showFaceCloser" style="margin: auto;">
+      <h4 style="margin: 0px;">Move Closer</h4>
+    </div> -->
+  </div>
   <!-- Display webcam video feed -->
-  <webcam #webcam [videoOptions]="{ width: 640, height: 480 }"></webcam>
-  
-  <!-- Canvas to overlay watermark -->
-  <div #canvasElement class="canvas-overlay"></div>
-
-  <!-- Button to take a photo -->
-  <button (click)="takePhoto()">Take Photo</button>
+  <div style="display: grid;">
+    <webcam #webcam [videoOptions]="{ width: 640, height: 480 }"></webcam>
+    <!-- Canvas to overlay watermark -->
+    <div #canvasElement class="canvas-overlay"></div>
+  </div>
 
   <!-- Display the captured face -->
   <div *ngIf="webcamImage">
     <h3>Captured Face:</h3>
-    <img [src]="webcamImage?.imageAsDataUrl" alt="Captured Face" />
+    <img id="capturedImage" [src]="webcamImage?.imageAsDataUrl" alt="Captured Face" />
   </div>
 </div>
+
+<div id="showimage"></div>

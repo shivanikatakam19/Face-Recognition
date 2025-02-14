@@ -1,14 +1,13 @@
 import { Component, ElementRef, OnInit, ViewChild } from '@angular/core';
-import { RouterOutlet } from '@angular/router';
 import * as faceapi from 'face-api.js';
 import { CommonModule } from '@angular/common';
-import { HttpClient, HttpClientModule } from '@angular/common/http';
 import { WebcamImage, WebcamModule } from 'ngx-webcam';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner'
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [RouterOutlet, CommonModule, HttpClientModule, WebcamModule],
+  imports: [CommonModule, WebcamModule, MatProgressSpinnerModule],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
 })
@@ -17,21 +16,24 @@ export class AppComponent implements OnInit {
     | ElementRef
     | undefined;
   webcamImage: WebcamImage | any = null;
-  videoStarted: boolean = false;
   canvas: HTMLCanvasElement | any;
   video: HTMLVideoElement | any;
   hasTakenPhoto: boolean = false;
-  // Minimum face area percentage of the canvas size to consider as a "full face"
   MIN_FACE_AREA_PERCENTAGE = 0.1; // Adjust this threshold as needed
 
   private faceShapeWidth = 200;
   private faceShapeHeight = 250;
   private centerX: number = 320; // Canvas width / 2
   private centerY: number = 240; // Canvas height / 2
+  isLoading: boolean = false;
+  private scanningY: number = 0;
+  private scanningDirection: number = 1; // 1: moving down; -1: moving up
+  showKeepFaceMsg: boolean = false;
 
-  constructor(private http: HttpClient) {}
+  constructor() { }
 
   ngOnInit(): void {
+    this.isLoading = true;
     this.loadModels();
   }
 
@@ -48,11 +50,8 @@ export class AppComponent implements OnInit {
     }
   }
 
-  // Start webcam
   startWebcam(): void {
     this.video = document.createElement('video');
-    this.video.width = 640;
-    this.video.height = 480;
 
     navigator.mediaDevices
       .getUserMedia({ video: {} })
@@ -60,8 +59,22 @@ export class AppComponent implements OnInit {
         this.video.srcObject = stream;
         this.video.play();
         this.video.onloadeddata = () => {
+          this.isLoading = false;
+          this.showKeepFaceMsg = true;
           this.canvas = faceapi.createCanvasFromMedia(this.video);
+          // Append the canvas to the element referenced by #canvasElement in your template
           this.canvasElement?.nativeElement.append(this.canvas);
+          // Set initial canvas dimensions if needed (should be 640 x 480)
+          this.canvas.width = 640;
+          this.canvas.height = 480;
+          // Recalculate the center based on the canvas dimensions
+          this.centerX = this.canvas.width / 2;
+          this.centerY = this.canvas.height / 2;
+          // Initialize scanningY at the top of the oval
+          this.scanningY = this.centerY - this.faceShapeHeight / 2;
+          // Start the scanning animation
+          this.animateScanningEffect();
+          // Optionally, start detection loop
           this.detectFaceAndDrawLandmarks();
         };
       })
@@ -70,14 +83,12 @@ export class AppComponent implements OnInit {
       });
   }
 
-  // Detect faces and draw the watermark
   async detectFaceAndDrawLandmarks(): Promise<void> {
     if (!this.video) return;
 
     const detections = await faceapi
       .detectAllFaces(this.video)
       .withFaceLandmarks()
-      .withFaceDescriptors();
 
     if (!this.canvas) return;
     const context = this.canvas.getContext('2d');
@@ -86,26 +97,15 @@ export class AppComponent implements OnInit {
     }
 
     faceapi.matchDimensions(this.canvas, { width: 640, height: 480 });
-    const resizedDetections = faceapi.resizeResults(detections, {
+    const resizedDetections: any = faceapi.resizeResults(detections, {
       width: 640,
       height: 480,
     });
 
-    // remove the face draw detections from the identified face
-
-    // resizedDetections.forEach((detection) => {
-    // Draw the face landmarks
-    //   faceapi.draw.drawDetections(this.canvas, [detection]);
-    //   faceapi.draw.drawFaceLandmarks(this.canvas, [detection]);
-    // });
-
-    // Draw the static watermark face shape (oval)
-    this.drawFaceShapeWatermark();
-
-    // Check if a full face is detected
+    // Check if a full face is detected within the oval boundary
     const fullFaceDetected = this.isFullFaceWithinOval(resizedDetections);
 
-    // Automatically take a photo only if a full face is detected and photo has not been taken yet
+    // If a full face is detected, schedule a photo capture after 3 seconds
     if (fullFaceDetected && !this.hasTakenPhoto) {
       this.hasTakenPhoto = true; // Set flag to prevent further photo captures
       this.takePhoto(); // Capture the photo
@@ -118,32 +118,79 @@ export class AppComponent implements OnInit {
   // Function to draw an oval face shape watermark on the canvas
   drawFaceShapeWatermark(): void {
     if (!this.canvas) return;
-
     const context = this.canvas.getContext('2d');
     if (!context) return;
 
-    // Define the size and position of the watermark
-    const faceShapeWidth = 200;
-    const faceShapeHeight = 250;
-    const centerX = this.canvas.width / 2;
-    const centerY = this.canvas.height / 2;
+    const canvasWidth = this.canvas.width;
+    const canvasHeight = this.canvas.height;
+    // Use predefined watermark dimensions
+    const watermarkWidth = this.faceShapeWidth;
+    const watermarkHeight = this.faceShapeHeight;
+    // Calculate center (should be set in startWebcam)
+    const centerX = canvasWidth / 2;
+    const centerY = canvasHeight / 2;
 
-    // Draw the oval watermark
+    // Clear previous drawings if needed
+    context.clearRect(0, 0, canvasWidth, canvasHeight);
+
+    // Draw the oval watermark border
     context.beginPath();
-    context.ellipse(
-      centerX,
-      centerY,
-      faceShapeWidth / 2,
-      faceShapeHeight / 2,
-      0,
-      0,
-      2 * Math.PI
-    );
+    if (typeof context.ellipse === 'function') {
+      context.ellipse(centerX, centerY, watermarkWidth / 2, watermarkHeight / 2, 0, 0, 2 * Math.PI);
+    } else {
+      context.arc(centerX, centerY, Math.min(watermarkWidth, watermarkHeight) / 2, 0, 2 * Math.PI);
+    }
     context.closePath();
     context.lineWidth = 3;
-    context.strokeStyle = 'rgba(255, 0, 0, 0.5)'; // Semi-transparent red stroke
-    context.setLineDash([5, 5]); // Dashed line for watermark
+    context.strokeStyle = 'rgba(255, 0, 0, 0.5)';
+    context.setLineDash([5, 5]);
     context.stroke();
+  }
+
+  // Animate the scanning effect inside the oval watermark
+  animateScanningEffect(): void {
+    if (!this.canvas) return;
+    const context = this.canvas.getContext('2d');
+    if (!context) return;
+
+    // Use the current canvas dimensions and watermark settings
+    const canvasWidth = this.canvas.width;
+    const canvasHeight = this.canvas.height;
+    const watermarkWidth = this.faceShapeWidth;
+    const watermarkHeight = this.faceShapeHeight;
+    const centerX = canvasWidth / 2;
+    const centerY = canvasHeight / 2;
+
+    // Update scanningY so that it moves between the top and bottom of the oval
+    const minY = centerY - watermarkHeight / 2;
+    const maxY = centerY + watermarkHeight / 2 - 10; // 10 pixels is the scanning line height
+    this.scanningY += this.scanningDirection * 2; // move 2 pixels per frame
+    if (this.scanningY > maxY || this.scanningY < minY) {
+      this.scanningDirection *= -1; // reverse direction
+      // Clamp scanningY within bounds
+      this.scanningY = Math.max(minY, Math.min(this.scanningY, maxY));
+    }
+
+    // Redraw the watermark border first
+    this.drawFaceShapeWatermark();
+
+    // Draw scanning effect inside the oval
+    context.save();
+    context.beginPath();
+    if (typeof context.ellipse === 'function') {
+      context.ellipse(centerX, centerY, watermarkWidth / 2, watermarkHeight / 2, 0, 0, 2 * Math.PI);
+    } else {
+      context.arc(centerX, centerY, Math.min(watermarkWidth, watermarkHeight) / 2, 0, 2 * Math.PI);
+    }
+    context.clip();
+
+    // Draw the scanning line (a semi-transparent rectangle)
+    context.fillStyle = 'rgba(0, 255, 0, 0.3)';
+    // The scanning line covers the entire width of the watermark region.
+    context.fillRect(centerX - watermarkWidth / 2, this.scanningY, watermarkWidth, 10);
+    context.restore();
+    if (!this.hasTakenPhoto)
+      requestAnimationFrame(() => this.animateScanningEffect());
   }
 
   // Check if a full face is detected within the oval boundary
@@ -182,58 +229,104 @@ export class AppComponent implements OnInit {
 
   // Take a photo when clicked and send it to the backend
   takePhoto(): void {
-    if (this.canvas && this.video) {
-      // Define the watermark bounds (size and position)
-      const faceShapeWidth = 200;
-      const faceShapeHeight = 250;
-      const centerX = this.canvas.width / 2;
-      const centerY = this.canvas.height / 2;
+    this.showKeepFaceMsg = false;
+    // Function to crop the image inside the watermark (oval)
+    if (!this.video || !this.canvas) return;
 
-      // Crop the image inside the watermark area (oval)
-      const croppedCanvas = document.createElement('canvas');
-      const croppedContext = croppedCanvas.getContext('2d');
-      if (croppedContext) {
-        // Set the cropping size to the watermark's size
-        croppedCanvas.width = faceShapeWidth;
-        croppedCanvas.height = faceShapeHeight;
+    // Define watermark (oval) dimensions
+    const watermarkWidth = 300;
+    const watermarkHeight = 350;
+    const centerX = this.canvas.width / 2;
+    const centerY = this.canvas.height / 2;
 
-        // Draw the face portion inside the watermark bounds
-        croppedContext.drawImage(
-          this.video,
-          centerX - faceShapeWidth / 2,
-          centerY - faceShapeHeight / 2, // Source (cropping region)
-          faceShapeWidth,
-          faceShapeHeight, // Source size
-          0,
-          0,
-          faceShapeWidth,
-          faceShapeHeight // Target (cropped region)
-        );
+    // Create a new canvas for the cropped image
+    const croppedCanvas = document.createElement('canvas');
+    croppedCanvas.width = watermarkWidth;
+    croppedCanvas.height = watermarkHeight;
+    const ctx = croppedCanvas.getContext('2d');
+    if (!ctx) return;
 
-        // Convert cropped face to base64 image
-        const croppedFaceBase64 = croppedCanvas.toDataURL('image/jpeg');
+    // Save context state
+    ctx.save();
 
-        // Display the captured image
-        this.webcamImage = { imageAsDataUrl: croppedFaceBase64 };
-
-        // Send to the backend
-        this.sendFaceToBackend(croppedFaceBase64);
-      }
+    // Define the oval clipping path on the cropped canvas
+    ctx.beginPath();
+    if (typeof ctx.ellipse === 'function') {
+      ctx.ellipse(
+        watermarkWidth / 2,        // center x in cropped canvas
+        watermarkHeight / 2,       // center y in cropped canvas
+        watermarkWidth / 2,        // x-radius
+        watermarkHeight / 2,       // y-radius
+        0,                         // rotation
+        0,                         // start angle
+        2 * Math.PI                // end angle
+      );
+    } else {
+      ctx.arc(
+        watermarkWidth / 2,
+        watermarkHeight / 2,
+        Math.min(watermarkWidth, watermarkHeight) / 2,
+        0,
+        2 * Math.PI
+      );
     }
+    ctx.clip();
+
+    // Draw the portion of the video corresponding to the watermark region.
+    // Calculate the top-left corner of the cropping region based on the canvas center.
+    const sourceX = centerX - watermarkWidth / 2;
+    const sourceY = centerY - watermarkHeight / 2;
+
+    ctx.drawImage(
+      this.video,
+      sourceX,            // source x in video
+      sourceY,            // source y in video
+      watermarkWidth,     // source width
+      watermarkHeight,    // source height
+      0,                  // destination x on cropped canvas
+      0,                  // destination y on cropped canvas
+      watermarkWidth,     // destination width
+      watermarkHeight     // destination height
+    );
+
+    // Restore the context (remove clipping)
+    ctx.restore();
+
+    // Convert the cropped canvas to a data URL (base64 image)
+    const croppedDataUrl = croppedCanvas.toDataURL('image/jpeg');
+    this.webcamImage = { imageAsDataUrl: croppedDataUrl };
+    setTimeout(() => {
+      this.identifyImage(croppedDataUrl)
+
+    }, 2000);
   }
 
-  // Send the cropped face image to the backend
-  sendFaceToBackend(croppedFaceBase64: string): void {
-    const formData = new FormData();
-    formData.append('face', croppedFaceBase64);
+  async identifyImage(croppedDataUrl: any) {
+    const croppedImage = new Image();
+    croppedImage.src = croppedDataUrl;
 
-    this.http.post('your-backend-endpoint', formData).subscribe(
-      (response: any) => {
-        console.log('Successfully sent face to backend:', response);
-      },
-      (error: any) => {
-        console.error('Error sending face to backend:', error);
+    // Use face-api.js to detect a face in the cropped image
+    try {
+      const detection = await faceapi
+        .detectSingleFace(croppedImage)
+        .withFaceLandmarks()
+
+      if (!detection) {
+        // No face was detected in the cropped image.
+        this.showKeepFaceMsg = true;
+        console.warn('No face detected. Please keep your face inside the frame.');
+      } else {
+        // Face detected; optionally, you can log or process detection further.
+        this.showKeepFaceMsg = false;
+        console.log('Face detected:', detection);
       }
-    );
+    }
+    catch (e: any) {
+
+    }
+    const context = this.canvas.getContext('2d');
+    if (context) {
+      context.clearRect(0, 0, this.canvas.width, this.canvas.height); // Clear previous drawings
+    }
   }
 }
